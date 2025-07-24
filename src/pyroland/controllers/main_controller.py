@@ -54,7 +54,7 @@ class DirectoryWatcher(QThread):
     def __init__(
         self,
         directory: Path,
-        poll_interval: float = 2.0,
+        poll_interval: float = 1.0,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -273,52 +273,39 @@ class MainController(QObject):
         self._plot_file(path)
 
     def _plot_file(self, path: Path) -> None:
-        """Read, correct, fit and plot a single SIF file."""
         try:
             wavelengths_nm, counts = self._read_sif(path)
         except Exception as err:
             print(f"[ERROR] Failed to read {path}: {err}")
             return
-        if wavelengths_nm.size == 0 or counts.size == 0:
+        if wavelengths_nm.size == 0:
             return
 
-        # Apply enabled corrections
         corrected_counts = self._corr_manager.apply(wavelengths_nm, counts)
 
-        # ----------------------------------------------------------------
-        # Build fit mask from global range line-edits
-        # ----------------------------------------------------------------
         fit_mask = np.ones_like(wavelengths_nm, dtype=bool)
         if self._global_xmin is not None:
             fit_mask &= wavelengths_nm >= self._global_xmin
         if self._global_xmax is not None:
             fit_mask &= wavelengths_nm <= self._global_xmax
 
-        # ----------------------------------------------------------------
-        # Planck fit on *masked* data
-        # ----------------------------------------------------------------
-        fit_result = None
-        if np.any(fit_mask):  # only fit if at least one point in range
+        fit_result: Optional[dict] = None
+        if np.any(fit_mask):
             try:
                 fit_result = self._temp_manager.fit(
                     wavelengths_nm[fit_mask], corrected_counts[fit_mask]
                 )
-                # needed by PlotController
                 fit_result["fit_wavelengths"] = wavelengths_nm[fit_mask]
             except Exception as err:
                 print(f"[WARNING] Fit failed: {err}")
 
-        # Build title
         title = (
             f"{path.name} — corrected spectrum"
-            if any(
-                self._corr_manager.is_enabled(n)
-                for n in self._corr_manager.available_corrections()
-            )
+            if any(self._corr_manager.is_enabled(n)
+                   for n in self._corr_manager.available_corrections())
             else f"{path.name} — raw spectrum (no corrections)"
         )
 
-        # Plot
         self._plot_manager.plot_spectrum(
             wavelengths_nm,
             corrected_counts,

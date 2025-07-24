@@ -53,7 +53,7 @@ class TemperatureController:
             ``gof_label``    – str, TeX-ready label for the GOF metric
         """
         # Non-linear least squares fit
-        T, T_err, S, _S_err, gof = self._fitter.fit(
+        T, T_err, S, S_err, gof = self._fitter.fit(
             wavelengths_nm, counts, yerr  # type: ignore[arg-type]
         )
 
@@ -64,6 +64,8 @@ class TemperatureController:
             "model_counts": model_counts,
             "T": T,
             "T_err": T_err,
+            "S": S,
+            "S_err": S_err,
             "gof": gof,
             "gof_label": self._fitter.gof_label or "",
         }
