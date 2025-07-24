@@ -1,14 +1,15 @@
-# file: src/pyroland/controllers/maincontroller.py
 """
-maincontroller.py
+main_controller.py
+==================
 
-High-level controller that wires the Qt UI to application logic:
+High-level Qt controller that connects the GUI to the application logic:
+
 * Folder selection & live directory watching.
-* Table view of all `.sif` files (newest → oldest).
-* Delegates plotting to :class:`~src.pyroland.controllers.plot_controller.PlotController`.
+* Table view of all ``.sif`` files (newest → oldest).
+* User-selectable wavelength-dependent corrections applied *on the fly*.
+* Delegates plotting to :class:`src.pyroland.controllers.plot_controller.PlotController`.
 
-Updated to use **sif-parser** (`sif_parser.utils.parse`) instead of the
-non-existent `SifFile` class.
+Built for Qt 6/PySide6.
 """
 from __future__ import annotations
 
@@ -19,22 +20,30 @@ from typing import List, Tuple
 
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
-from PySide6.QtWidgets import QApplication, QFileDialog, QTableWidgetItem
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QListWidgetItem,
+    QTableWidgetItem,
+)
 from sif_parser.utils import parse as sif_parse  # <-- correct import
 
 from src.pyroland.controllers.plot_controller import PlotController
+from src.pyroland.controllers.corrections_controller import (
+    CorrectionsController,
+)
 
 __all__ = ["MainController"]
-
 
 # --------------------------------------------------------------------------- #
 #                               Worker Thread                                 #
 # --------------------------------------------------------------------------- #
 class DirectoryWatcher(QThread):
     """
-    Poll *directory* for `.sif` files and emit an updated list whenever the
+    Poll *directory* for ``.sif`` files and emit an updated list whenever the
     contents change.
     """
+
     files_changed = Signal(list)  # list[Path]
 
     def __init__(
@@ -76,19 +85,29 @@ class DirectoryWatcher(QThread):
 class MainController(QObject):
     """All non-plot UI responsibilities are handled here."""
 
+    # Default fibre length for the attenuation corrector (metres)
+    _FIBER_LENGTH_M = 2.0
+
     def __init__(self, window) -> None:
         super().__init__(window)
         self.window = window
         self.ui = window.ui
 
-        # Plot helper
+        # --- Helper managers ------------------------------------------ #
         self._plot_manager = PlotController(self.ui.plot_widget)
+        self._corr_manager = CorrectionsController(
+            fiber_length_m=self._FIBER_LENGTH_M
+        )
 
+        # --- Runtime state -------------------------------------------- #
         self._current_dir: Path | None = None
         self._watcher: DirectoryWatcher | None = None
+        self._last_plot_path: Path | None = None  # re-plot on correction toggle
 
-        self._connect_signals()
+        # --- GUI setup ------------------------------------------------- #
         self._configure_table()
+        self._populate_corrections_list()
+        self._connect_signals()
 
         QApplication.instance().aboutToQuit.connect(self._cleanup_threads)
 
@@ -97,6 +116,9 @@ class MainController(QObject):
     # ------------------------------------------------------------------ #
     def _connect_signals(self) -> None:
         self.ui.folder_pushButton.clicked.connect(self._on_select_folder)
+        self.ui.corrections_listWidget.itemChanged.connect(
+            self._on_correction_item_changed
+        )
 
     def _configure_table(self) -> None:
         tbl = self.ui.tableWidget
@@ -108,6 +130,23 @@ class MainController(QObject):
         tbl.setSelectionBehavior(tbl.SelectionBehavior.SelectRows)
         tbl.setSortingEnabled(False)
         tbl.itemDoubleClicked.connect(self._on_table_item_double_clicked)
+
+    # ------------------------------------------------------------------ #
+    # Corrections list widget
+    # ------------------------------------------------------------------ #
+    def _populate_corrections_list(self) -> None:
+        """Fill the QListWidget with available corrections (all *checked*)."""
+        lw = self.ui.corrections_listWidget
+        lw.blockSignals(True)  # mute *itemChanged* during initial fill
+        lw.clear()
+
+        for name in self._corr_manager.available_corrections():
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
+            item.setCheckState(Qt.Checked)
+            lw.addItem(item)
+
+        lw.blockSignals(False)
 
     # ------------------------------------------------------------------ #
     # Folder selection
@@ -149,6 +188,19 @@ class MainController(QObject):
             self._plot_file(sorted_files[0])
 
     # ------------------------------------------------------------------ #
+    # Corrections toggled
+    # ------------------------------------------------------------------ #
+    @Slot(QListWidgetItem)
+    def _on_correction_item_changed(self, item: QListWidgetItem) -> None:
+        """Enable/disable a correction when its checkbox is toggled."""
+        enabled = item.checkState() == Qt.Checked
+        self._corr_manager.set_enabled(item.text(), enabled)
+
+        # Re-apply to current spectrum (if any)
+        if self._last_plot_path and self._last_plot_path.exists():
+            self._plot_file(self._last_plot_path)
+
+    # ------------------------------------------------------------------ #
     # Table population
     # ------------------------------------------------------------------ #
     def _populate_table(self, files: List[Path]) -> List[Path]:
@@ -174,6 +226,7 @@ class MainController(QObject):
         self._plot_file(path)
 
     def _plot_file(self, path: Path) -> None:
+        """Read, correct, and plot a single SIF file."""
         try:
             wavelengths_nm, counts = self._read_sif(path)
         except Exception as err:
@@ -183,14 +236,26 @@ class MainController(QObject):
         if wavelengths_nm.size == 0 or counts.size == 0:
             return
 
-        title = f"{path.name} — latest spectrum"
-        self._plot_manager.plot_spectrum(wavelengths_nm, counts, title=title)
+        # Apply *enabled* corrections
+        corrected_counts = self._corr_manager.apply(wavelengths_nm, counts)
+
+        title = f"{path.name} — corrected spectrum"
+        if not any(self._corr_manager.is_enabled(name) for name in
+                   self._corr_manager.available_corrections()):
+            title = f"{path.name} — raw spectrum (no corrections)"
+
+        self._plot_manager.plot_spectrum(
+            wavelengths_nm,
+            corrected_counts,
+            title=title,
+        )
+        self._last_plot_path = path  # remember for re-plotting
 
     # ---- SIF reader --------------------------------------------------- #
     @staticmethod
     def _read_sif(path: Path) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Use ``sif_parser.utils.parse`` to return *wavelengths_nm, counts*.
+        Use ``sif_parser.utils.parse`` to return ``wavelengths_nm, counts``.
 
         The parser returns:
             data : (N×2) ndarray [[wavelength, counts], ...]

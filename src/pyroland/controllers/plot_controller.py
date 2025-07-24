@@ -1,4 +1,4 @@
-# file: src/pyroland/controllers/plot_controller.py
+# file: src/pyroland/correctors/plot_controller.py
 """
 plot_controller.py
 
