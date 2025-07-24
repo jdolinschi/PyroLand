@@ -29,7 +29,7 @@ class TemperatureFitter:
         return S * (TemperatureFitter._c1 / wl_m ** 5) / (np.exp(exponent) - 1)
 
     def __init__(self, p0=(2000, 1e-11)):
-        """
+        """t
         Parameters
         ----------
         p0 : tuple (T_guess, S_guess)
