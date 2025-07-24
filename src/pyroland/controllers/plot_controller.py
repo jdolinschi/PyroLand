@@ -19,7 +19,29 @@ from typing import Iterable, Mapping, Any
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QPointF
+from pyqtgraph.graphicsItems.LegendItem import ItemSample
+from pyqtgraph import functions as fn
 
+class BigSample(ItemSample):
+    """
+    Custom legend sample that draws a thicker, larger horizontal line
+    without the default small sample to avoid duplication.
+    """
+    def __init__(self, item):
+        super().__init__(item)
+        # bump up the box size
+        self.setFixedWidth(40)
+        self.setFixedHeight(40)
+
+    def paint(self, p, *args):
+        # Draw only a thick centered horizontal line, skip super().paint()
+        opts = self.item.opts
+        pen = fn.mkPen(opts['pen'])
+        pen.setWidth(3)
+        p.setPen(pen)
+        h = self.height() / 2
+        w = self.width() - 2
+        p.drawLine(1, h, w, h)
 
 class PlotController:
     """
@@ -27,7 +49,7 @@ class PlotController:
 
     The class owns two reusable curves:
         1. Data (white, 2 px)
-        2. Fit  (red, 1.5 px)
+        2. Fit (red, 1.5 px)
     """
 
     # ------------------------------------------------------------------ #
@@ -53,7 +75,9 @@ class PlotController:
         )
 
         # Legend (offset ≈ top-left)
-        self._legend: pg.LegendItem = self._plot_item.addLegend(offset=(10, 10))
+        self._legend: pg.LegendItem = self._plot_item.addLegend(
+            offset=(10, 10), labelTextSize="20pt", sampleType=BigSample
+        )
 
         # Double-click reset
         self._widget.scene().sigMouseClicked.connect(self._on_mouse_click)
@@ -107,7 +131,7 @@ class PlotController:
             T_err = float(fit["T_err"])
             gof = float(fit["gof"])
             gof_label = str(fit.get("gof_label", ""))
-            legend_label = f"T = {T:.0f} ± {T_err:.0f} K · {gof_label} = {gof:.3f}"
+            legend_label = f"T = {T:.0f} \u00B1 {T_err:.0f} K | R\u00B2 = {gof:.3f}"
             self._legend.addItem(self._fit_curve, legend_label)
 
         # Auto-range once, then lock
