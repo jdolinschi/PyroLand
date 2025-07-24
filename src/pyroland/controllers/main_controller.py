@@ -3,29 +3,36 @@
 main_controller.py
 ==================
 
-High-level Qt controller that connects the GUI to application logic:
+High-level Qt controller that connects the GUI to application logic.
 
-* Folder selection & live directory watching
-* Table view of all ``.sif`` files (newest → oldest)
-* User-selectable wavelength corrections (applied on the fly)
-* Temperature fitting (Planck curve) and live overlay on the plot
+This version adds support for two global X-range controls:
 
-Built for Qt 6 / PySide6.
+    • globalXMin_lineEdit  →  lower wavelength bound  [nm]
+    • globalXMax_lineEdit  →  upper wavelength bound  [nm]
+
+* Both accept floats/integers via a QDoubleValidator.
+* Empty value → “no bound”.
+* Editing-finished (enter key or focus-out) triggers re-plot.
+* Invalid input pops up a warning and the value is discarded.
+* The *fit* uses only the in-range data, while the plot shows out-of-range
+  points in grey for clarity.
 """
 from __future__ import annotations
 
 import os
 import time
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
+from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QListWidgetItem,
     QTableWidgetItem,
+    QMessageBox,
 )
 
 from sif_parser.utils import parse as sif_parse  # correct import
@@ -89,19 +96,20 @@ class MainController(QObject):
 
         # Helper managers
         self._plot_manager = PlotController(self.ui.plot_widget)
-        self._corr_manager = CorrectionsController(
-            fiber_length_m=self._FIBER_LENGTH_M
-        )
+        self._corr_manager = CorrectionsController(fiber_length_m=self._FIBER_LENGTH_M)
         self._temp_manager = TemperatureController()
 
         # Runtime state
-        self._current_dir: Path | None = None
-        self._watcher: DirectoryWatcher | None = None
-        self._last_plot_path: Path | None = None  # re-plot on correction toggle
+        self._current_dir: Optional[Path] = None
+        self._watcher: Optional[DirectoryWatcher] = None
+        self._last_plot_path: Optional[Path] = None  # re-plot on correction toggle
+        self._global_xmin: Optional[float] = None
+        self._global_xmax: Optional[float] = None
 
         # GUI setup
         self._configure_table()
         self._populate_corrections_list()
+        self._setup_global_range_controls()
         self._connect_signals()
 
         QApplication.instance().aboutToQuit.connect(self._cleanup_threads)
@@ -140,6 +148,58 @@ class MainController(QObject):
             item.setCheckState(Qt.Checked)
             lw.addItem(item)
         lw.blockSignals(False)
+
+    # ------------------------------------------------------------------ #
+    # Global range controls
+    # ------------------------------------------------------------------ #
+    def _setup_global_range_controls(self) -> None:
+        """Attach validators and signals to the range QLineEdits."""
+        validator = QDoubleValidator(bottom=0.0, top=1e9, decimals=6, parent=self)
+        validator.setNotation(QDoubleValidator.StandardNotation)
+
+        for le in (self.ui.globalXMin_lineEdit, self.ui.globalXMax_lineEdit):
+            le.setValidator(validator)
+            le.editingFinished.connect(self._on_global_range_changed)
+
+    def _value_from_line_edit(self, le) -> Optional[float]:
+        """Return float value or *None* if empty; pop up on invalid input."""
+        text = le.text().strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            self._show_warning(
+                "Invalid number",
+                f"'{text}' is not a valid numeric value.\n"
+                "Please enter an integer or decimal number.",
+            )
+            le.clear()
+            return None
+
+    def _show_warning(self, title: str, message: str) -> None:
+        QMessageBox.warning(self.window, title, message)
+
+    @Slot()
+    def _on_global_range_changed(self) -> None:
+        """Validate & store new global range, then refresh current plot."""
+        xmin = self._value_from_line_edit(self.ui.globalXMin_lineEdit)
+        xmax = self._value_from_line_edit(self.ui.globalXMax_lineEdit)
+
+        # Consistency check
+        if xmin is not None and xmax is not None and xmin >= xmax:
+            self._show_warning(
+                "Invalid range",
+                "The minimum wavelength must be smaller than the maximum.",
+            )
+            return
+
+        self._global_xmin = xmin
+        self._global_xmax = xmax
+
+        # Re-plot current spectrum (if any)
+        if self._last_plot_path and self._last_plot_path.exists():
+            self._plot_file(self._last_plot_path)
 
     # ------------------------------------------------------------------ #
     # Folder selection
@@ -225,8 +285,28 @@ class MainController(QObject):
         # Apply enabled corrections
         corrected_counts = self._corr_manager.apply(wavelengths_nm, counts)
 
-        # Planck fit on corrected data
-        fit_result = self._temp_manager.fit(wavelengths_nm, corrected_counts)
+        # ----------------------------------------------------------------
+        # Build fit mask from global range line-edits
+        # ----------------------------------------------------------------
+        fit_mask = np.ones_like(wavelengths_nm, dtype=bool)
+        if self._global_xmin is not None:
+            fit_mask &= wavelengths_nm >= self._global_xmin
+        if self._global_xmax is not None:
+            fit_mask &= wavelengths_nm <= self._global_xmax
+
+        # ----------------------------------------------------------------
+        # Planck fit on *masked* data
+        # ----------------------------------------------------------------
+        fit_result = None
+        if np.any(fit_mask):  # only fit if at least one point in range
+            try:
+                fit_result = self._temp_manager.fit(
+                    wavelengths_nm[fit_mask], corrected_counts[fit_mask]
+                )
+                # needed by PlotController
+                fit_result["fit_wavelengths"] = wavelengths_nm[fit_mask]
+            except Exception as err:
+                print(f"[WARNING] Fit failed: {err}")
 
         # Build title
         title = (
@@ -244,15 +324,14 @@ class MainController(QObject):
             corrected_counts,
             title=title,
             fit=fit_result,
+            fit_mask=fit_mask,
         )
         self._last_plot_path = path
 
     # ---- SIF reader --------------------------------------------------- #
     @staticmethod
     def _read_sif(path: Path) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Return ``wavelengths_nm, counts`` from a SIF file.
-        """
+        """Return ``wavelengths_nm, counts`` from a SIF file."""
         data, _info = sif_parse(str(path))
         if data.ndim != 2 or data.shape[1] < 2:
             raise ValueError("Unexpected SIF data shape")
