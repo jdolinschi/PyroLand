@@ -1,28 +1,39 @@
+"""
+main_controller.py
+==================
+
+High-level GUI controller: orchestrates UI actions, plotting and – now – file
+saving / auto-saving of spectrum fits.
+
+Author: Your Name <you@example.com>
+"""
+
 from __future__ import annotations
 
 import os
 import time
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QListWidgetItem,
-    QTableWidgetItem,
     QMessageBox,
     QPushButton,
     QLineEdit,
+    QTableWidgetItem,
 )
 
-from sif_parser.utils import parse as sif_parse  # correct import
+from sif_parser.utils import parse as sif_parse
 
 from src.pyroland.controllers.plot_controller import PlotController
 from src.pyroland.controllers.corrections_controller import CorrectionsController
 from src.pyroland.controllers.temperature_controller import TemperatureController
+from src.pyroland.controllers.file_controller import FileController
 
 __all__ = ["MainController"]
 
@@ -72,6 +83,9 @@ class MainController(QObject):
 
     _FIBER_LENGTH_M = 2.0  # default fibre length (m)
 
+    # ------------------------------------------------------------------ #
+    # Construction / init
+    # ------------------------------------------------------------------ #
     def __init__(self, window) -> None:
         super().__init__(window)
         self.window = window
@@ -82,14 +96,26 @@ class MainController(QObject):
         self._corr_manager = CorrectionsController(fiber_length_m=self._FIBER_LENGTH_M)
         self._temp_manager = TemperatureController()
 
-        # Runtime state
+        # Runtime state -------------------------------------------------- #
         self._current_dir: Optional[Path] = None
         self._watcher: Optional[DirectoryWatcher] = None
-        self._last_plot_path: Optional[Path] = None  # re-plot on correction toggle
+        self._last_plot_path: Optional[Path] = None
+
+        # Cached data for quick saving
+        self._last_wavelengths: Optional[np.ndarray] = None
+        self._last_counts: Optional[np.ndarray] = None
+        self._last_sif_info: Optional[object] = None
+        self._last_fit_result: Optional[dict] = None
+
+        # Fitting / plotting limits
         self._global_xmin: Optional[float] = None
         self._global_xmax: Optional[float] = None
 
-        # GUI setup
+        # Auto-save bookkeeping
+        self._auto_save_dir: Optional[Path] = None
+        self._auto_initial_files: set[Path] = set()
+
+        # GUI setup ------------------------------------------------------ #
         self._configure_table()
         self._populate_corrections_list()
         self._setup_global_range_controls()
@@ -107,6 +133,8 @@ class MainController(QObject):
             self._on_correction_item_changed
         )
         self.ui.addRegion_pushButton.clicked.connect(self._on_add_region_row)
+        self.ui.saveFit_pushButton.clicked.connect(self._on_save_fit_clicked)
+        self.ui.autoSaveFits_checkBox.toggled.connect(self._on_auto_save_toggled)
 
     def _configure_table(self) -> None:
         tbl = self.ui.tableWidget
@@ -241,21 +269,18 @@ class MainController(QObject):
 
     def _on_region_value_changed(self) -> None:
         """Triggered whenever a min/max editor finishes editing."""
-        # Validate region (x-min < x-max); pop warning if invalid
         tbl = self.ui.excludedRegions_tableWidget
         for r in range(tbl.rowCount()):
             xmin, xmax = self._get_region_row_values(r)
             if xmin is None or xmax is None:
-                continue  # incomplete -> ignore
+                continue  # incomplete → ignore
             if xmin >= xmax:
                 self._show_warning(
                     "Invalid region",
                     f"Row {r+1}: x-min must be smaller than x-max.",
                 )
-                # Clear both to force user to re-enter
                 tbl.cellWidget(r, 1).clear()
                 tbl.cellWidget(r, 2).clear()
-        # After any change, replot
         self._replot_if_possible()
 
     def _collect_excluded_regions(self) -> List[Tuple[float, float]]:
@@ -334,9 +359,108 @@ class MainController(QObject):
     def _on_correction_item_changed(self, item: QListWidgetItem) -> None:
         enabled = item.checkState() == Qt.Checked
         self._corr_manager.set_enabled(item.text(), enabled)
-
-        # Re-plot current spectrum
         self._replot_if_possible()
+
+    # ------------------------------------------------------------------ #
+    # Saving / auto-saving
+    # ------------------------------------------------------------------ #
+    @Slot()
+    def _on_save_fit_clicked(self) -> None:
+        """Manual save – user chooses destination."""
+        if self._last_plot_path is None:
+            self._show_warning("No data", "No spectrum is currently plotted.")
+            return
+
+        default_name = self._last_plot_path.with_suffix(".asc").name
+        start_dir = str(self._current_dir) if self._current_dir else os.getcwd()
+        save_path_str, _ = QFileDialog.getSaveFileName(
+            parent=self.window,
+            caption="Save fit data",
+            dir=str(Path(start_dir) / default_name),
+            filter="ASC files (*.asc)",
+        )
+        if not save_path_str:
+            return
+
+        self._save_fit(Path(save_path_str))
+
+    @Slot(bool)
+    def _on_auto_save_toggled(self, checked: bool) -> None:
+        """
+        Enable / disable auto-saving.
+
+        When enabling, the user selects a *folder*; existing spectra already in
+        the table are recorded so that only **new** arrivals are auto-saved.
+        """
+        if checked:
+            start = str(self._current_dir) if self._current_dir else os.getcwd()
+            folder = QFileDialog.getExistingDirectory(
+                parent=self.window,
+                caption="Select folder for auto-saved fits",
+                dir=start,
+                options=QFileDialog.Option.ShowDirsOnly,
+            )
+            if not folder:
+                # User cancelled – revert checkbox
+                self.ui.autoSaveFits_checkBox.setChecked(False)
+                return
+
+            self._auto_save_dir = Path(folder)
+            self._auto_initial_files.clear()
+            # Anything already in the table counts as "old"
+            tbl = self.ui.tableWidget
+            for row in range(tbl.rowCount()):
+                item = tbl.item(row, 0)
+                if item:
+                    self._auto_initial_files.add(
+                        Path(item.data(Qt.ItemDataRole.UserRole))
+                    )
+
+            # Save the currently plotted spectrum immediately
+            if self._last_plot_path:
+                asc_path = self._auto_save_dir / f"{self._last_plot_path.stem}.asc"
+                self._save_fit(asc_path)
+        else:
+            self._auto_save_dir = None
+            self._auto_initial_files.clear()
+
+    def _save_fit(self, save_path: Path) -> None:
+        """Delegate the heavy work to *FileController*."""
+        if (
+            self._last_wavelengths is None
+            or self._last_counts is None
+            or self._last_sif_info is None
+        ):
+            self._show_warning(
+                "Nothing to save", "There is no spectrum data in memory."
+            )
+            return
+
+        corrections_state: Dict[str, bool] = {
+            name: self._corr_manager.is_enabled(name)
+            for name in self._corr_manager.available_corrections()
+        }
+
+        FileController.save(
+            save_path=save_path,
+            wavelengths_nm=self._last_wavelengths,
+            counts=self._last_counts,
+            fit_result=self._last_fit_result,
+            sif_info=self._last_sif_info,
+            global_xmin=self._global_xmin,
+            global_xmax=self._global_xmax,
+            excluded_regions=self._collect_excluded_regions(),
+            corrections_state=corrections_state,
+        )
+
+    def _auto_save_if_needed(self, path: Path) -> None:
+        """Auto-save *path* if it is a *new* spectrum."""
+        if not self._auto_save_dir:
+            return
+        if path in self._auto_initial_files:
+            return  # skip spectra that pre-dated auto-save
+        asc_path = self._auto_save_dir / f"{path.stem}.asc"
+        self._save_fit(asc_path)
 
     # ------------------------------------------------------------------ #
     # Table helpers
@@ -366,7 +490,7 @@ class MainController(QObject):
 
     def _plot_file(self, path: Path) -> None:
         try:
-            wavelengths_nm, counts = self._read_sif(path)
+            wavelengths_nm, counts, sif_info = self._read_sif(path)
         except Exception as err:
             print(f"[ERROR] Failed to read {path}: {err}")
             return
@@ -398,8 +522,10 @@ class MainController(QObject):
 
         title = (
             f"{path.name} — corrected spectrum"
-            if any(self._corr_manager.is_enabled(n)
-                   for n in self._corr_manager.available_corrections())
+            if any(
+                self._corr_manager.is_enabled(n)
+                for n in self._corr_manager.available_corrections()
+            )
             else f"{path.name} — raw spectrum (no corrections)"
         )
 
@@ -410,18 +536,28 @@ class MainController(QObject):
             fit=fit_result,
             fit_mask=fit_mask,
         )
+
+        print(fit_result)
+        # Cache everything for potential saving
         self._last_plot_path = path
+        self._last_wavelengths = wavelengths_nm
+        self._last_counts = counts
+        self._last_sif_info = sif_info
+        self._last_fit_result = fit_result
+
+        # Auto-save if requested
+        self._auto_save_if_needed(path)
 
     # ---- SIF reader --------------------------------------------------- #
     @staticmethod
-    def _read_sif(path: Path) -> Tuple[np.ndarray, np.ndarray]:
-        """Return ``wavelengths_nm, counts`` from a SIF file."""
-        data, _info = sif_parse(str(path))
+    def _read_sif(path: Path) -> Tuple[np.ndarray, np.ndarray, object]:
+        """Return ``wavelengths_nm, counts, info`` from a SIF file."""
+        data, info = sif_parse(str(path))
         if data.ndim != 2 or data.shape[1] < 2:
             raise ValueError("Unexpected SIF data shape")
         wavelengths_nm = np.asarray(data[:, 0], dtype=float)
         counts = np.asarray(data[:, 1], dtype=float)
-        return wavelengths_nm, counts
+        return wavelengths_nm, counts, info
 
     # ------------------------------------------------------------------ #
     # Shutdown
