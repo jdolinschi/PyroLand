@@ -1,22 +1,3 @@
-# file: src/pyroland/controllers/main_controller.py
-"""
-main_controller.py
-==================
-
-High-level Qt controller that connects the GUI to application logic.
-
-This version adds support for two global X-range controls:
-
-    • globalXMin_lineEdit  →  lower wavelength bound  [nm]
-    • globalXMax_lineEdit  →  upper wavelength bound  [nm]
-
-* Both accept floats/integers via a QDoubleValidator.
-* Empty value → “no bound”.
-* Editing-finished (enter key or focus-out) triggers re-plot.
-* Invalid input pops up a warning and the value is discarded.
-* The *fit* uses only the in-range data, while the plot shows out-of-range
-  points in grey for clarity.
-"""
 from __future__ import annotations
 
 import os
@@ -33,6 +14,8 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QTableWidgetItem,
     QMessageBox,
+    QPushButton,
+    QLineEdit,
 )
 
 from sif_parser.utils import parse as sif_parse  # correct import
@@ -110,6 +93,7 @@ class MainController(QObject):
         self._configure_table()
         self._populate_corrections_list()
         self._setup_global_range_controls()
+        self._setup_excluded_regions_table()
         self._connect_signals()
 
         QApplication.instance().aboutToQuit.connect(self._cleanup_threads)
@@ -122,6 +106,7 @@ class MainController(QObject):
         self.ui.corrections_listWidget.itemChanged.connect(
             self._on_correction_item_changed
         )
+        self.ui.addRegion_pushButton.clicked.connect(self._on_add_region_row)
 
     def _configure_table(self) -> None:
         tbl = self.ui.tableWidget
@@ -198,8 +183,112 @@ class MainController(QObject):
         self._global_xmax = xmax
 
         # Re-plot current spectrum (if any)
-        if self._last_plot_path and self._last_plot_path.exists():
-            self._plot_file(self._last_plot_path)
+        self._replot_if_possible()
+
+    # ------------------------------------------------------------------ #
+    # Excluded regions table
+    # ------------------------------------------------------------------ #
+    def _setup_excluded_regions_table(self) -> None:
+        tbl = self.ui.excludedRegions_tableWidget
+        tbl.setRowCount(0)
+        tbl.setColumnCount(3)  # Remove | x-min | x-max
+        tbl.horizontalHeader().setStretchLastSection(True)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(tbl.EditTrigger.NoEditTriggers)  # we use widgets
+        tbl.setSelectionBehavior(tbl.SelectionBehavior.SelectRows)
+
+    def _on_add_region_row(self) -> None:
+        tbl = self.ui.excludedRegions_tableWidget
+        row = tbl.rowCount()
+        tbl.insertRow(row)
+
+        # ---- Remove button ----
+        btn = QPushButton("X")
+        btn.setFixedWidth(24)
+        btn.setFixedHeight(24)
+        btn.setToolTip("Remove this exclusion region")
+        btn.clicked.connect(self._on_remove_region_clicked)
+        tbl.setCellWidget(row, 0, btn)
+
+        # ---- x-min & x-max editors ----
+        validator = QDoubleValidator(bottom=0.0, top=1e9, decimals=6, parent=self)
+        validator.setNotation(QDoubleValidator.StandardNotation)
+
+        xmin_edit = QLineEdit()
+        xmin_edit.setPlaceholderText("x-min")
+        xmin_edit.setValidator(validator)
+        xmin_edit.editingFinished.connect(self._on_region_value_changed)
+        tbl.setCellWidget(row, 1, xmin_edit)
+
+        xmax_edit = QLineEdit()
+        xmax_edit.setPlaceholderText("x-max")
+        xmax_edit.setValidator(validator)
+        xmax_edit.editingFinished.connect(self._on_region_value_changed)
+        tbl.setCellWidget(row, 2, xmax_edit)
+
+    def _on_remove_region_clicked(self) -> None:
+        sender = self.sender()
+        if not isinstance(sender, QPushButton):
+            return
+        tbl = self.ui.excludedRegions_tableWidget
+        # Find the row containing this button
+        for r in range(tbl.rowCount()):
+            if tbl.cellWidget(r, 0) is sender:
+                tbl.removeRow(r)
+                break
+        # Re-plot after removal
+        self._replot_if_possible()
+
+    def _on_region_value_changed(self) -> None:
+        """Triggered whenever a min/max editor finishes editing."""
+        # Validate region (x-min < x-max); pop warning if invalid
+        tbl = self.ui.excludedRegions_tableWidget
+        for r in range(tbl.rowCount()):
+            xmin, xmax = self._get_region_row_values(r)
+            if xmin is None or xmax is None:
+                continue  # incomplete -> ignore
+            if xmin >= xmax:
+                self._show_warning(
+                    "Invalid region",
+                    f"Row {r+1}: x-min must be smaller than x-max.",
+                )
+                # Clear both to force user to re-enter
+                tbl.cellWidget(r, 1).clear()
+                tbl.cellWidget(r, 2).clear()
+        # After any change, replot
+        self._replot_if_possible()
+
+    def _collect_excluded_regions(self) -> List[Tuple[float, float]]:
+        """Return list of (xmin, xmax) for rows with valid numbers."""
+        regions: List[Tuple[float, float]] = []
+        tbl = self.ui.excludedRegions_tableWidget
+        for r in range(tbl.rowCount()):
+            xmin, xmax = self._get_region_row_values(r)
+            if xmin is None or xmax is None:
+                continue
+            if xmin < xmax:
+                regions.append((xmin, xmax))
+        return regions
+
+    def _get_region_row_values(self, row: int) -> Tuple[Optional[float], Optional[float]]:
+        tbl = self.ui.excludedRegions_tableWidget
+        xmin_edit = tbl.cellWidget(row, 1)
+        xmax_edit = tbl.cellWidget(row, 2)
+        xmin = self._safe_float_from_line_edit(xmin_edit)
+        xmax = self._safe_float_from_line_edit(xmax_edit)
+        return xmin, xmax
+
+    @staticmethod
+    def _safe_float_from_line_edit(widget: QLineEdit | None) -> Optional[float]:
+        if widget is None:
+            return None
+        text = widget.text().strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
 
     # ------------------------------------------------------------------ #
     # Folder selection
@@ -247,8 +336,7 @@ class MainController(QObject):
         self._corr_manager.set_enabled(item.text(), enabled)
 
         # Re-plot current spectrum
-        if self._last_plot_path and self._last_plot_path.exists():
-            self._plot_file(self._last_plot_path)
+        self._replot_if_possible()
 
     # ------------------------------------------------------------------ #
     # Table helpers
@@ -272,6 +360,10 @@ class MainController(QObject):
         path = Path(item.data(Qt.ItemDataRole.UserRole))
         self._plot_file(path)
 
+    def _replot_if_possible(self) -> None:
+        if self._last_plot_path and self._last_plot_path.exists():
+            self._plot_file(self._last_plot_path)
+
     def _plot_file(self, path: Path) -> None:
         try:
             wavelengths_nm, counts = self._read_sif(path)
@@ -283,11 +375,16 @@ class MainController(QObject):
 
         corrected_counts = self._corr_manager.apply(wavelengths_nm, counts)
 
+        # Build fit mask
         fit_mask = np.ones_like(wavelengths_nm, dtype=bool)
         if self._global_xmin is not None:
             fit_mask &= wavelengths_nm >= self._global_xmin
         if self._global_xmax is not None:
             fit_mask &= wavelengths_nm <= self._global_xmax
+
+        # Apply per-row excluded regions
+        for xmin, xmax in self._collect_excluded_regions():
+            fit_mask &= ~((wavelengths_nm >= xmin) & (wavelengths_nm <= xmax))
 
         fit_result: Optional[dict] = None
         if np.any(fit_mask):

@@ -1,22 +1,14 @@
 # file: src/pyroland/controllers/plot_controller.py
 """
-plot_controller.py
+plot_controller.py (refactored again)
 
-Wrapper around a :class:`pyqtgraph.PlotWidget` that knows how to draw
-
-    • Spectrum points *used* for fitting   – white,  2 px
-    • Spectrum points *excluded* from fit – grey,   2 px (left & right segments)
-    • Best‑fit Planck curve (in‑range)     – bright red, 1.5 px
-    • Best‑fit Planck curve (out‑of‑range) – muted  red, 1.5 px (left & right)
-
-A fixed legend in the top‑left corner displays the fitted temperature
-(± 1 σ) together with the goodness‑of‑fit metric.
-
-Double‑click anywhere inside the plot to auto‑range and lock the axes.
+- Arbitrary excluded regions via fit_mask (grey/dark red segments).
+- Full Planck tails (10–20 000 nm) are shown but NEVER drive autoRange.
+- Double-left-click reset now restores the view to the raw spectrum range only.
 """
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Any, Optional
+from typing import Iterable, Mapping, Any, Optional, List, Tuple
 
 import numpy as np
 import pyqtgraph as pg
@@ -26,20 +18,12 @@ from pyqtgraph import functions as fn
 
 from src.pyroland.scripts.temperature_fitter import TemperatureFitter
 
-# --------------------------------------------------------------------------- #
-#                               Helpers                                       #
-# --------------------------------------------------------------------------- #
 
 def _planck_nm(lambda_nm: np.ndarray | float, T: float) -> np.ndarray:
-    """Planck spectral radiance *per unit wavelength* (arbitrary units).
-
-    The absolute scaling will later be absorbed into an overall multiplicative
-    factor, so physical units are not important here – only the functional
-    dependence on *λ* and *T* matters.
-    """
-    h = 6.626_070_15e-34  # Planck [J s]
-    c = 2.997_924_58e8    # speed of light [m s⁻¹]
-    k = 1.380_649e-23     # Boltzmann [J K⁻¹]
+    """Planck spectral radiance *per unit wavelength* (arbitrary units)."""
+    h = 6.626_070_15e-34  # Planck [J s]
+    c = 2.997_924_58e8    # speed of light [m s⁻¹]
+    k = 1.380_649e-23     # Boltzmann [J K⁻¹]
 
     lam = np.asarray(lambda_nm, dtype=float) * 1e-9  # nm → m
     with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
@@ -67,11 +51,8 @@ class BigSample(ItemSample):
 
 
 class PlotController:
-    """Encapsulates all interactions with a :class:`pyqtgraph.PlotWidget`."""
+    """Encapsulates interactions with a :class:`pyqtgraph.PlotWidget`."""
 
-    # ------------------------------------------------------------------ #
-    # Construction
-    # ------------------------------------------------------------------ #
     def __init__(self, plot_widget: pg.PlotWidget) -> None:
         self._widget = plot_widget
         self._plot_item: pg.PlotItem = plot_widget.getPlotItem()
@@ -82,24 +63,39 @@ class PlotController:
         self._plot_item.setLabel("bottom", "wavelength (nm)")
         self._plot_item.setLabel("left", "counts (bg corrected)")
 
-        # ------------ Spectrum curves ------------
-        white_pen = pg.mkPen("w", width=2)
-        grey_pen = pg.mkPen((150, 150, 150), width=2)
-        self._data_in = self._plot_item.plot(pen=white_pen, name="Collected spectrum")
-        self._data_out_left = self._plot_item.plot(pen=grey_pen)
-        self._data_out_right = self._plot_item.plot(pen=grey_pen)
+        # Pens
+        self._pen_data_in = pg.mkPen("w", width=2)
+        self._pen_data_out = pg.mkPen((150, 150, 150), width=2)
+        self._pen_fit_in = pg.mkPen("r", width=1.5)
+        self._pen_fit_out = pg.mkPen((140, 20, 20), width=1.5)
 
-        # -------------- Fit curves ---------------
-        red_pen = pg.mkPen("r", width=1.5)
-        dark_red_pen = pg.mkPen((140, 20, 20), width=1.5)
-        self._fit_in = self._plot_item.plot(pen=red_pen)
-        self._fit_out_left = self._plot_item.plot(pen=dark_red_pen)
-        self._fit_out_right = self._plot_item.plot(pen=dark_red_pen)
+        # Primary (in-fit) curves
+        self._data_in = self._plot_item.plot(pen=self._pen_data_in,
+                                             name="Collected spectrum")
+        self._fit_in = self._plot_item.plot(pen=self._pen_fit_in)
+
+        # Pools for excluded segments (data + fit) within measured domain
+        self._data_out_segments: List[pg.PlotDataItem] = []
+        self._fit_out_segments: List[pg.PlotDataItem] = []
+
+        # Full tails of Planck curve outside measured domain
+        self._fit_tail_left = self._plot_item.plot(pen=self._pen_fit_out)
+        self._fit_tail_right = self._plot_item.plot(pen=self._pen_fit_out)
+
+        # (Optional) help pyqtgraph ignore bounds of tails when auto-ranging
+        # If your pyqtgraph version supports it:
+        for tail in (self._fit_tail_left, self._fit_tail_right):
+            if hasattr(tail, "setIgnoreBounds"):
+                tail.setIgnoreBounds(True)
 
         # Legend
         self._legend = self._plot_item.addLegend(
             offset=(10, 10), labelTextSize="20pt", sampleType=BigSample
         )
+
+        # Data cache for custom auto-range on double-click
+        self._last_x: np.ndarray = np.array([])
+        self._last_y: np.ndarray = np.array([])
 
         # Double-click reset
         self._widget.scene().sigMouseClicked.connect(self._on_mouse_click)
@@ -116,34 +112,38 @@ class PlotController:
         fit: Optional[Mapping[str, Any]] = None,
         fit_mask: Optional[np.ndarray] = None,
     ) -> None:
-        """Refresh plot with a new spectrum + (optional) fit."""
+        """
+        Refresh plot with a new spectrum + (optional) fit.
+        """
         x_data = np.asarray(wavelengths_nm, dtype=float)
         y_data = np.asarray(counts, dtype=float)
         if x_data.size == 0:
             return
 
-        # ----------- Build boolean masks (fit vs non-fit) -----------
+        self._last_x = x_data   # cache for manual auto-range
+        self._last_y = y_data
+
         if fit_mask is None or fit_mask.size != x_data.size:
             fit_mask = np.ones_like(x_data, dtype=bool)
 
-        first_in = np.where(fit_mask)[0][0] if np.any(fit_mask) else 0
-        last_in = np.where(fit_mask)[0][-1] if np.any(fit_mask) else x_data.size - 1
+        # Identify segments excluded from fit
+        excluded_segments = _build_segments(~fit_mask)
 
-        left_mask = np.arange(x_data.size) < first_in
-        right_mask = np.arange(x_data.size) > last_in
-
-        # ------------------- Plot data curves -----------------------
+        # ------------------- Plot DATA -------------------
         self._data_in.setData(x_data[fit_mask], y_data[fit_mask])
-        self._data_out_left.setData(x_data[left_mask], y_data[left_mask]) \
-            if np.any(left_mask) else self._data_out_left.clear()
-        self._data_out_right.setData(x_data[right_mask], y_data[right_mask]) \
-            if np.any(right_mask) else self._data_out_right.clear()
 
-        # --------------- Prepare / draw fit curves ------------------
-        # Stage 1 – draw only the *in-fit* part so autoRange ignores the
-        # long tails.  Stage 2 (after autoRange) adds the extrapolated tails.
-        self._fit_out_left.clear()
-        self._fit_out_right.clear()
+        self._ensure_pool(self._data_out_segments, len(excluded_segments), self._pen_data_out)
+        for i, (start, stop) in enumerate(excluded_segments):
+            self._data_out_segments[i].setData(x_data[start:stop], y_data[start:stop])
+        for j in range(len(excluded_segments), len(self._data_out_segments)):
+            self._data_out_segments[j].clear()
+
+        # ------------------- Plot FIT --------------------
+        self._fit_in.clear()
+        for seg in self._fit_out_segments:
+            seg.clear()
+        self._fit_tail_left.clear()
+        self._fit_tail_right.clear()
 
         if fit and np.any(fit_mask):
             T = float(fit["T"])
@@ -151,42 +151,45 @@ class PlotController:
             lambda_subset = np.asarray(fit.get("fit_wavelengths", x_data[fit_mask]),
                                        dtype=float)
 
-            # Preferred: use S from TemperatureController
+            # Scaling factor S
             S = float(fit.get("S", 0.0))
             if S <= 0.0:
-                # Fallback: least-squares scaling against our own Planck impl.
                 planck_subset = TemperatureFitter._planck(lambda_subset * 1e-9, T, 1.0)
                 denom = np.sum(planck_subset ** 2)
                 S = np.sum(model_subset * planck_subset) / denom if denom else 0.0
 
-            # In-data model for immediate display
-            model_in_data = TemperatureFitter._planck(x_data * 1e-9, T, S)
-            self._fit_in.setData(x_data[fit_mask], model_in_data[fit_mask])
+            # Model over measured domain
+            model_all = TemperatureFitter._planck(x_data * 1e-9, T, S)
+            self._fit_in.setData(x_data[fit_mask], model_all[fit_mask])
 
-            # ------------------- Auto-range now ----------------------
+            # Excluded segments inside measured domain
+            self._ensure_pool(self._fit_out_segments, len(excluded_segments), self._pen_fit_out)
+            for i, (start, stop) in enumerate(excluded_segments):
+                self._fit_out_segments[i].setData(x_data[start:stop], model_all[start:stop])
+            for j in range(len(excluded_segments), len(self._fit_out_segments)):
+                self._fit_out_segments[j].clear()
+
+            # Auto-range ONLY on measured data + in-fit portion (already plotted)
             self._view_box.autoRange()
             self._plot_item.disableAutoRange()
 
-            # ------------- Build full (1 nm-20 000 nm) curve ----------
-            x_left = np.arange(10, x_data.min(), 10.0)  # 10 nm → before data
-            x_right = np.arange(x_data.max() + 10.0, 20001.0, 10.0)
-            x_full = np.concatenate((x_left, x_data, x_right))
-            y_full = TemperatureFitter._planck(x_full * 1e-9, T, S)
+            # ---- Plot full tails (10–20 000 nm) WITHOUT changing view ----
+            x_left = np.arange(10.0, x_data.min(), 10.0) if x_data.min() > 10 else np.array([])
+            x_right = np.arange(x_data.max() + 10.0, 20001.0, 10.0) if x_data.max() < 20000 else np.array([])
 
-            # Masks for the long tails
-            left_tail_mask = x_full < x_data[first_in]
-            right_tail_mask = x_full > x_data[last_in]
+            if x_left.size:
+                y_left = TemperatureFitter._planck(x_left * 1e-9, T, S)
+                self._fit_tail_left.setData(x_left, y_left)
+            if x_right.size:
+                y_right = TemperatureFitter._planck(x_right * 1e-9, T, S)
+                self._fit_tail_right.setData(x_right, y_right)
 
-            self._fit_out_left.setData(x_full[left_tail_mask],
-                                       y_full[left_tail_mask])
-            self._fit_out_right.setData(x_full[right_tail_mask],
-                                        y_full[right_tail_mask])
         else:
-            self._fit_in.clear()
+            # No fit: just auto-range on spectrum
             self._view_box.autoRange()
             self._plot_item.disableAutoRange()
 
-        # ------------------------ Legend ---------------------------
+        # ---------------- Legend ----------------
         self._legend.clear()
         self._legend.addItem(self._data_in, "Collected spectrum")
         if fit and np.any(fit_mask):
@@ -202,8 +205,44 @@ class PlotController:
     # Internal helpers                                                   #
     # ------------------------------------------------------------------ #
     def _on_mouse_click(self, ev: pg.MouseClickEvent) -> None:
-        """Double-left-click → auto-range + lock."""
+        """Double-left-click → reset to measured spectrum bounds only."""
         if ev.double() and ev.button() == Qt.MouseButton.LeftButton:
             if self._view_box.sceneBoundingRect().contains(ev.scenePos()):
-                self._view_box.autoRange()
-                self._plot_item.disableAutoRange()
+                if self._last_x.size and self._last_y.size:
+                    x0, x1 = float(self._last_x.min()), float(self._last_x.max())
+                    y0, y1 = float(self._last_y.min()), float(self._last_y.max())
+                    # Avoid zero-height/width ranges
+                    if x0 == x1:
+                        x0 -= 0.5
+                        x1 += 0.5
+                    if y0 == y1:
+                        y0 -= 1
+                        y1 += 1
+                    self._plot_item.setRange(xRange=(x0, x1), yRange=(y0, y1), padding=0.05)
+                    self._plot_item.disableAutoRange()
+                else:
+                    # Fallback if no cache
+                    self._view_box.autoRange()
+                    self._plot_item.disableAutoRange()
+
+    def _ensure_pool(self, pool: List[pg.PlotDataItem], size: int, pen: pg.functions.mkPen) -> None:
+        """Ensure *pool* has at least *size* PlotDataItems with given *pen*."""
+        while len(pool) < size:
+            item = self._plot_item.plot(pen=pen)
+            pool.append(item)
+
+
+def _build_segments(mask: np.ndarray) -> List[Tuple[int, int]]:
+    """Return list of (start, stop) slices where mask==True (contiguous).
+
+    Example:
+      mask = [F F T T F T] -> segments = [(2,4), (5,6)]
+    """
+    if mask.size == 0:
+        return []
+    idx = np.flatnonzero(mask)
+    if idx.size == 0:
+        return []
+    splits = np.where(np.diff(idx) != 1)[0] + 1
+    groups = np.split(idx, splits)
+    return [(g[0], g[-1] + 1) for g in groups]
