@@ -1,19 +1,3 @@
-"""
-main_controller.py
-==================
-
-High-level GUI controller: orchestrates UI actions, plotting and – now –
-file saving / auto-saving of spectrum fits.
-
-*Auto-save Fits* behaviour
---------------------------
-When the *Auto-save fits* checkbox is **checked**, **every** spectrum that is
-shown in the plot (regardless of when it was added to the folder) is
-immediately written to the selected ``.asc`` folder.
-
-Author: Your Name <you@example.com>
-"""
-
 from __future__ import annotations
 
 import os
@@ -40,6 +24,7 @@ from src.pyroland.controllers.plot_controller import PlotController
 from src.pyroland.controllers.corrections_controller import CorrectionsController
 from src.pyroland.controllers.temperature_controller import TemperatureController
 from src.pyroland.controllers.file_controller import FileController
+from src.pyroland.controllers.corrections_info_controller import CorrectionsInfoController
 
 __all__ = ["MainController"]
 
@@ -101,6 +86,7 @@ class MainController(QObject):
         self._plot_manager = PlotController(self.ui.plot_widget)
         self._corr_manager = CorrectionsController(fiber_length_m=self._FIBER_LENGTH_M)
         self._temp_manager = TemperatureController()
+        self._info_manager = CorrectionsInfoController(parent=self.window)
 
         # Runtime state -------------------------------------------------- #
         self._current_dir: Optional[Path] = None
@@ -136,6 +122,9 @@ class MainController(QObject):
         self.ui.folder_pushButton.clicked.connect(self._on_select_folder)
         self.ui.corrections_listWidget.itemChanged.connect(
             self._on_correction_item_changed
+        )
+        self.ui.corrections_listWidget.itemDoubleClicked.connect(
+            self._on_correction_item_double_clicked
         )
         self.ui.addRegion_pushButton.clicked.connect(self._on_add_region_row)
         self.ui.saveFit_pushButton.clicked.connect(self._on_save_fit_clicked)
@@ -329,12 +318,17 @@ class MainController(QObject):
             self._plot_file(sorted_files[0])
 
     # ------------------------------------------------------------------ #
-    # Corrections toggled
+    # Corrections toggled / info
     # ------------------------------------------------------------------ #
     @Slot(QListWidgetItem)
     def _on_correction_item_changed(self, item: QListWidgetItem) -> None:
         self._corr_manager.set_enabled(item.text(), item.checkState() == Qt.Checked)
         self._replot_if_possible()
+
+    @Slot(QListWidgetItem)
+    def _on_correction_item_double_clicked(self, item: QListWidgetItem) -> None:
+        """Show an explanatory window for the selected correction."""
+        self._info_manager.show_info(item.text())
 
     # ------------------------------------------------------------------ #
     # Saving / auto-saving

@@ -90,20 +90,20 @@ class CorrectionsController:
 
     # File names for the correction curves (relative to *base_data_dir*)
     _FILES = {
-        "Grating efficiency": "src/pyroland/corrections/data/grating_600lm_500nmBlaze_efficiency.csv",
-        "Fiber attenuation": "src/pyroland/corrections/data/fiber_M59L02-attenuation.csv",
-        "Camera QE": "src/pyroland/corrections/data/camera_quantum_efficiency.csv",
-        "QTH lens transmission": "src/pyroland/corrections/data/QTH_lamp_lens.csv",
-        "Silvered mirrors": "src/pyroland/corrections/data/spectrometer_silvered-mirrors_reflectivity.csv",
+        "Grating efficiency (600 l/mm, 500 nm blaze)": "src/pyroland/corrections/data/grating_600lm_500nmBlaze_efficiency.csv",
+        "Fiber attenuation (ThorLabs M59L02)": "src/pyroland/corrections/data/fiber_M59L02-attenuation.csv",
+        "Camera QE (Newton DU920P_BX2DD)": "src/pyroland/corrections/data/camera_quantum_efficiency.csv",
+        "Lens transmission (ThorLabs QTH10/M)": "src/pyroland/corrections/data/QTH_lamp_lens.csv",
+        "Silvered mirrors (Andor Kymera 328i-D2-sil)": "src/pyroland/corrections/data/spectrometer_silvered-mirrors_reflectivity.csv",
     }
 
     # Fixed correction order (first → last)
     _ORDER: List[str] = [
-        "Grating efficiency",
-        "Fiber attenuation",
-        "Camera QE",
-        "QTH lens transmission",
-        "Silvered mirrors",
+        "Grating efficiency (600 l/mm, 500 nm blaze)",
+        "Fiber attenuation (ThorLabs M59L02)",
+        "Camera QE (Newton DU920P_BX2DD)",
+        "Lens transmission (ThorLabs QTH10/M)",
+        "Silvered mirrors (Andor Kymera 328i-D2-sil)",
     ]
 
     # ------------------------------------------------------------------ #
@@ -122,21 +122,21 @@ class CorrectionsController:
 
         # Instantiate each corrector with its CSV path
         self._correctors: Dict[str, object] = {
-            "Grating efficiency": GratingEfficiencyCorrector(
-                str(self._base_dir / self._FILES["Grating efficiency"])
+            "Grating efficiency (600 l/mm, 500 nm blaze)": GratingEfficiencyCorrector(
+                str(self._base_dir / self._FILES["Grating efficiency (600 l/mm, 500 nm blaze)"])
             ),
-            "Fiber attenuation": FiberAttenuationCorrector(
-                str(self._base_dir / self._FILES["Fiber attenuation"]),
+            "Fiber attenuation (ThorLabs M59L02)": FiberAttenuationCorrector(
+                str(self._base_dir / self._FILES["Fiber attenuation (ThorLabs M59L02)"]),
                 fiber_length_m,
             ),
-            "Camera QE": QuantumEfficiencyCorrector(
-                str(self._base_dir / self._FILES["Camera QE"])
+            "Camera QE (Newton DU920P_BX2DD)": QuantumEfficiencyCorrector(
+                str(self._base_dir / self._FILES["Camera QE (Newton DU920P_BX2DD)"])
             ),
-            "QTH lens transmission": QTHLensTransmissionCorrector(
-                str(self._base_dir / self._FILES["QTH lens transmission"])
+            "Lens transmission (ThorLabs QTH10/M)": QTHLensTransmissionCorrector(
+                str(self._base_dir / self._FILES["Lens transmission (ThorLabs QTH10/M)"])
             ),
-            "Silvered mirrors": SilveredMirrorCorrection(
-                str(self._base_dir / self._FILES["Silvered mirrors"]),
+            "Silvered mirrors (Andor Kymera 328i-D2-sil)": SilveredMirrorCorrection(
+                str(self._base_dir / self._FILES["Silvered mirrors (Andor Kymera 328i-D2-sil)"]),
                 n_mirrors=3,
             ),
         }
