@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 
 
@@ -29,7 +28,7 @@ class TemperatureFitter:
         exponent = TemperatureFitter._c2 / (wl_m * T)
         return S * (TemperatureFitter._c1 / wl_m ** 5) / (np.exp(exponent) - 1)
 
-    def __init__(self, p0=(2000, 1e-11), title="Black-body Fit"):
+    def __init__(self, p0=(2000, 1e-11)):
         """
         Parameters
         ----------
@@ -43,10 +42,9 @@ class TemperatureFitter:
         self.T_err = None
         self.S = None
         self.S_err = None
-        self.title = title
 
     def fit(self, wavelengths_nm: np.ndarray, counts: np.ndarray,
-            yerr: np.ndarray | None = None, plot: bool = True):
+            yerr: np.ndarray | None = None):
         """
         Fit the input spectrum and (optionally) plot data+fit.
 
@@ -104,26 +102,5 @@ class TemperatureFitter:
 
         self.gof = gof_value
         self.gof_label = gof_label
-
-        # Plot if desired
-        if plot:
-            # Raw data
-            plt.figure()
-            plt.plot(wavelengths_nm, counts, 'o', ms=4, label='Data')
-            # Overplot fit
-            wl_fit = np.linspace(wavelengths_nm.min(),
-                                 wavelengths_nm.max(), 500)
-            I_fit = self._planck(wl_fit * 1e-9, T_fit, S_fit)
-            plt.plot(wl_fit, I_fit, '-', lw=2,
-                     label=(f'Black‑body fit (T = {T_fit:.0f}±{T_err:.0f} K, '
-                            f'{gof_label} = {gof_value:.3f})')
-                     )
-            plt.xlabel('Wavelength (nm)')
-            plt.ylabel('Counts (arb. units)')
-            plt.title(self.title)
-            plt.legend()
-            plt.tight_layout()
-            plt.grid(True)
-            plt.show()
 
         return T_fit, T_err, S_fit, S_err, gof_value
