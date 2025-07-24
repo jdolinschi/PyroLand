@@ -325,7 +325,7 @@ class Ui_MainWindow(object):
     # setupUi
 
     def retranslateUi(self, MainWindow):
-        MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"MainWindow", None))
+        MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"PyroLand", None))
         self.folder_pushButton.setText(QCoreApplication.translate("MainWindow", u"Select folder to watch", None))
         self.folderwatching_label.setText(QCoreApplication.translate("MainWindow", u"Select a folder...", None))
         self.corrections_label.setText(QCoreApplication.translate("MainWindow", u"Select corrections to apply", None))
