@@ -2,7 +2,7 @@
 
 [![GitHub release](https://img.shields.io/github/v/release/jdolinschi/pyroland)](https://github.com/jdolinschi/pyroland/releases/latest)
 [![License](https://img.shields.io/github/license/jdolinschi/pyroland)](https://github.com/jdolinschi/pyroland/blob/main/LICENSE)
-![Python](https://img.shields.io/badge/python-3.9–3.13-blue)
+![Python](https://img.shields.io/badge/python-3.11–3.13-blue)
 
 **Pyroland** is a cross-platform desktop application that loads Andor `.sif`
 spectra automatically by actively watching a folder for new files,
@@ -41,10 +41,10 @@ and x-max of the spectrum to not use for fitting.
 
 ## Quick start (Windows)
 
-| Option                      | Steps                                                                                                                                            | Requires Python? |
-|-----------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|------------------|
-| **1. One-click EXE** (easy) | 1. Download **Pyroland-1.0.0.exe** from the [Releases] page.<br>2. Double-click.                                                                 | **No** |
-| **2. Poetry / developers**  | `git clone https://github.com/jdolinschi/PyroLand`<br>`cd PyroLand`<br>`poetry install`<br>`poetry run pyroland`                                  | **Yes** (3.9 – 3.13) |
+| Option                      | Steps                                                                                                                                            | Requires Python?      |
+|-----------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------|
+| **1. One-click EXE** (easy) | 1. Download **Pyroland-1.0.0.exe** from the [Releases] page.<br>2. Double-click.                                                                 | **No**                |
+| **2. Poetry / developers**  | `git clone https://github.com/jdolinschi/PyroLand`<br>`cd PyroLand`<br>`poetry install`<br>`poetry run pyroland`                                  | **Yes** (3.11 – 3.13) |
 
 
 > **Updating**  
