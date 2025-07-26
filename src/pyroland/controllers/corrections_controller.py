@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 import numpy as np
+from pyroland.util.resources import data_path
 
 # --------------------------------------------------------------------------- #
 # Individual correctors
@@ -77,27 +78,17 @@ except ImportError:  # pragma: no cover
 class CorrectionsController:
     """
     Maintains and applies a user-selectable set of spectral corrections.
-
-    Parameters
-    ----------
-    base_data_dir
-        Folder containing the CSV data files referenced by the correctors.
-        If *None*, the folder ``<project-root>/corrections`` is assumed.
-    fiber_length_m
-        Length of the fibre patch cord in metres (used only by the
-        :class:`~FiberAttenuationCorrector`).
     """
 
-    # File names for the correction curves (relative to *base_data_dir*)
+    # Filenames only – no dev-time “src/” prefix
     _FILES = {
-        "Grating efficiency (600 l/mm, 500 nm blaze)": "src/pyroland/corrections/data/grating_600lm_500nmBlaze_efficiency.csv",
-        "Fiber attenuation (ThorLabs M59L02)": "src/pyroland/corrections/data/fiber_M59L02-attenuation.csv",
-        "Camera QE (Newton DU920P_BX2DD)": "src/pyroland/corrections/data/camera_quantum_efficiency.csv",
-        "Lens transmission (ThorLabs QTH10/M)": "src/pyroland/corrections/data/QTH_lamp_lens.csv",
-        "Silvered mirrors (Andor Kymera 328i-D2-sil)": "src/pyroland/corrections/data/spectrometer_silvered-mirrors_reflectivity.csv",
+        "Grating efficiency (600 l/mm, 500 nm blaze)": "grating_600lm_500nmBlaze_efficiency.csv",
+        "Fiber attenuation (ThorLabs M59L02)": "fiber_M59L02-attenuation.csv",
+        "Camera QE (Newton DU920P_BX2DD)": "camera_quantum_efficiency.csv",
+        "Lens transmission (ThorLabs QTH10/M)": "QTH_lamp_lens.csv",
+        "Silvered mirrors (Andor Kymera 328i-D2-sil)": "spectrometer_silvered-mirrors_reflectivity.csv",
     }
 
-    # Fixed correction order (first → last)
     _ORDER: List[str] = [
         "Grating efficiency (600 l/mm, 500 nm blaze)",
         "Fiber attenuation (ThorLabs M59L02)",
@@ -107,41 +98,41 @@ class CorrectionsController:
     ]
 
     # ------------------------------------------------------------------ #
-    # Construction
-    # ------------------------------------------------------------------ #
     def __init__(
         self,
         base_data_dir: str | Path | None = None,
         fiber_length_m: float = 2.0,
     ) -> None:
-        self._base_dir = (
-            Path(base_data_dir).resolve()
-            if base_data_dir is not None
-            else Path(__file__).resolve().parents[3]
-        )
+        """
+        If *base_data_dir* is given, CSVs will be loaded from that folder
+        (useful for testing alternative calibration curves). Otherwise the
+        packaged resources are used.
+        """
+        if base_data_dir is not None:
+            self._resolve = lambda fn: Path(base_data_dir).joinpath(fn)
+        else:
+            self._resolve = data_path  # <- importlib.resources lookup
 
-        # Instantiate each corrector with its CSV path
         self._correctors: Dict[str, object] = {
             "Grating efficiency (600 l/mm, 500 nm blaze)": GratingEfficiencyCorrector(
-                str(self._base_dir / self._FILES["Grating efficiency (600 l/mm, 500 nm blaze)"])
+                str(self._resolve(self._FILES["Grating efficiency (600 l/mm, 500 nm blaze)"]))
             ),
             "Fiber attenuation (ThorLabs M59L02)": FiberAttenuationCorrector(
-                str(self._base_dir / self._FILES["Fiber attenuation (ThorLabs M59L02)"]),
+                str(self._resolve(self._FILES["Fiber attenuation (ThorLabs M59L02)"])),
                 fiber_length_m,
             ),
             "Camera QE (Newton DU920P_BX2DD)": QuantumEfficiencyCorrector(
-                str(self._base_dir / self._FILES["Camera QE (Newton DU920P_BX2DD)"])
+                str(self._resolve(self._FILES["Camera QE (Newton DU920P_BX2DD)"]))
             ),
             "Lens transmission (ThorLabs QTH10/M)": QTHLensTransmissionCorrector(
-                str(self._base_dir / self._FILES["Lens transmission (ThorLabs QTH10/M)"])
+                str(self._resolve(self._FILES["Lens transmission (ThorLabs QTH10/M)"]))
             ),
             "Silvered mirrors (Andor Kymera 328i-D2-sil)": SilveredMirrorCorrection(
-                str(self._base_dir / self._FILES["Silvered mirrors (Andor Kymera 328i-D2-sil)"]),
+                str(self._resolve(self._FILES["Silvered mirrors (Andor Kymera 328i-D2-sil)"])),
                 n_mirrors=3,
             ),
         }
 
-        # Start with everything enabled
         self._enabled: Dict[str, bool] = {name: True for name in self._ORDER}
 
     # ------------------------------------------------------------------ #
