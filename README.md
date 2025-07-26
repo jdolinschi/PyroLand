@@ -41,14 +41,11 @@ and x-max of the spectrum to not use for fitting.
 
 ## Quick start (Windows)
 
-| Option                      | Steps                                                                                                                   | Requires Python? |
-|-----------------------------|-------------------------------------------------------------------------------------------------------------------------|------------------|
-| **1. One-click EXE** (easy) | 1. Download **Pyroland-1.0.0.exe** from the [Releases] page.<br>2. Double-click.                                        | **No** |
-| **3. poetry / developers**  | ```powershell
-git clone https://github.com/jdolinschi/PyroLand
-cd PyroLand
-poetry install
-poetry run pyroland``` | **Yes** (3.9 – 3.13) |
+| Option                      | Steps                                                                                                                                            | Requires Python? |
+|-----------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|------------------|
+| **1. One-click EXE** (easy) | 1. Download **Pyroland-1.0.0.exe** from the [Releases] page.<br>2. Double-click.                                                                 | **No** |
+| **2. Poetry / developers**  | `git clone https://github.com/jdolinschi/PyroLand`<br>`cd PyroLand`<br>`poetry install`<br>`poetry run pyroland`                                  | **Yes** (3.9 – 3.13) |
+
 
 > **Updating**  
 > • EXE users: download the new file from Releases.  
