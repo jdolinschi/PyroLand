@@ -40,7 +40,7 @@ and plots the result instantly.
 
 ---
 
-## Workflow in one GIF 🤖 *(screenshot placeholder)*
+## Workflow in one GIF 🤖
 
 <div align="center">
   <img src="docs/screenshot.png" width="700" alt="Pyroland GUI">
