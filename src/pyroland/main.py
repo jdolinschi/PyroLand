@@ -12,11 +12,10 @@ from __future__ import annotations
 import sys
 from typing import Optional
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMainWindow
 
-from src.pyroland.gui.ui.mainwindow import Ui_MainWindow
-from src.pyroland.controllers.main_controller import MainController
+from pyroland.gui.ui.mainwindow import Ui_MainWindow
+from pyroland.controllers.main_controller import MainController
 
 
 class MainWindow(QMainWindow):

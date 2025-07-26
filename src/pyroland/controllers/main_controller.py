@@ -20,11 +20,11 @@ from PySide6.QtWidgets import (
 
 from sif_parser.utils import parse as sif_parse
 
-from src.pyroland.controllers.plot_controller import PlotController
-from src.pyroland.controllers.corrections_controller import CorrectionsController
-from src.pyroland.controllers.temperature_controller import TemperatureController
-from src.pyroland.controllers.file_controller import FileController
-from src.pyroland.controllers.corrections_info_controller import CorrectionsInfoController
+from pyroland.controllers.plot_controller import PlotController
+from pyroland.controllers.corrections_controller import CorrectionsController
+from pyroland.controllers.temperature_controller import TemperatureController
+from pyroland.controllers.file_controller import FileController
+from pyroland.controllers.corrections_info_controller import CorrectionsInfoController
 
 __all__ = ["MainController"]
 

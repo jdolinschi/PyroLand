@@ -32,39 +32,39 @@ import numpy as np
 #       even if you renamed a class in your own module.  Change the class
 #       names below if your local implementation differs.
 try:
-    from src.pyroland.corrections.correctors.grating_corrector import (
+    from pyroland.corrections.correctors.grating_corrector import (
         GratingEfficiencyCorrector,
     )
 except ImportError:  # pragma: no cover
-    from src.pyroland.corrections.correctors.grating_corrector import (
+    from pyroland.corrections.correctors.grating_corrector import (
         GratingCorrector as GratingEfficiencyCorrector,
     )
 
 try:
-    from src.pyroland.corrections.correctors.fiber_attenuation_corrector import (
+    from pyroland.corrections.correctors.fiber_attenuation_corrector import (
         FiberAttenuationCorrector,
     )
 except ImportError:  # pragma: no cover
     pass  # let the import fail loudly later if the file really is missing
 
 try:
-    from src.pyroland.corrections.correctors.camera_qe_efficiency_corrector import (
+    from pyroland.corrections.correctors.camera_qe_efficiency_corrector import (
         QuantumEfficiencyCorrector,
     )
 except ImportError:  # pragma: no cover
-    from src.pyroland.corrections.correctors.camera_qe_efficiency_corrector import (
+    from pyroland.corrections.correctors.camera_qe_efficiency_corrector import (
         CameraQEEfficiencyCorrector as QuantumEfficiencyCorrector,
     )
 
 try:
-    from src.pyroland.corrections.correctors.qth10_lamp_lens_corrector import (
+    from pyroland.corrections.correctors.qth10_lamp_lens_corrector import (
         QTHLensTransmissionCorrector,
     )
 except ImportError:  # pragma: no cover
     pass
 
 try:
-    from src.pyroland.corrections.correctors.spec_silv_mirror_corrector import (
+    from pyroland.corrections.correctors.spec_silv_mirror_corrector import (
         SilveredMirrorCorrection,
     )
 except ImportError:  # pragma: no cover

@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt
 from pyqtgraph.graphicsItems.LegendItem import ItemSample
 from pyqtgraph import functions as fn
 
-from src.pyroland.scripts.temperature_fitter import TemperatureFitter
+from pyroland.scripts.temperature_fitter import TemperatureFitter
 
 
 # --------------------------------------------------------------------------- #

@@ -18,7 +18,7 @@ from typing import Dict
 
 import numpy as np
 
-from src.pyroland.scripts.temperature_fitter import TemperatureFitter
+from pyroland.scripts.temperature_fitter import TemperatureFitter
 
 
 __all__ = ["TemperatureController"]

@@ -1,0 +1,45 @@
+[project]
+name            = "pyroland"
+version         = "1.0.0"
+description     = "Pyrometry for Andor .sif spectra"
+authors         = [{ name = "Nathan Dolinschi", email = "natinschi@gmail.com" }]
+license         = { text = "MIT" }
+readme          = "README.md"
+requires-python = ">=3.11,<=3.13.2"
+
+# ── Runtime dependencies ──
+dependencies = [
+  "pyside6==6.9.0",
+  "pyside6-addons==6.9.0",
+  "pyside6-essentials==6.9.0",
+  "shiboken6==6.9.0",
+  "numpy>=2.3",
+  "pandas>=2.3",
+  "matplotlib>=3.10",
+  "scipy>=1.16",
+  "pyqtgraph>=0.13",
+  "sif_parser>=0.3.5",
+  # Optional: comment out any you don’t need
+  "pyopengl>=3.1",
+  "pillow>=11.3",
+  "requests>=2.32",
+  "rapidfuzz>=3.13"
+]
+
+# entry-point command installed as `pyroland`
+[project.scripts]
+pyroland = "pyroland.main:main"
+
+# ── Poetry-specific packaging settings ──
+[tool.poetry]
+packages = [{ include = "pyroland", from = "src" }]
+include  = [
+  { path = "src/pyroland/corrections/data/*.csv", format = "wheel" },
+  { path = "src/pyroland/resources/**",           format = "wheel" },
+  { path = "src/pyroland/gui/ui/*.ui",            format = "wheel" },
+  { path = "src/pyroland/icons/app.ico",          format = "wheel" }
+]
+
+[build-system]
+requires      = ["poetry-core>=2.1.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
