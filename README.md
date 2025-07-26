@@ -116,6 +116,17 @@ is the workaround.
 
 ---
 
+## Acknowledgements 🙏
+
+The grey-body (Planck-law) fit implemented in **`pyroland/scripts/temperature_fitter.py`**
+is adapted from the open-source **T-RAX** spectroscopy toolkit  
+(<https://github.com/CPrescher/T-rax>, commit `faacaaea7b16d7d2d0709aab5bee0dfdc63fce7d`).  
+Many thanks to the T-RAX authors for releasing their code under a permissive
+license and documenting the maths so clearly.
+
+---
+
+
 ## License
 
 Pyroland is released under the **MIT License** – see [`LICENSE`](LICENSE).  
