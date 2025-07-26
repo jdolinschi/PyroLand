@@ -10,6 +10,7 @@ from importlib.resources import files
 from pathlib import Path
 
 _DATA_PACKAGE = "pyroland.corrections.data"
+_ICON_PACKAGE = "pyroland.icons"
 
 
 def data_path(filename: str) -> Path:
@@ -20,3 +21,6 @@ def data_path(filename: str) -> Path:
     inside a wheel, or extracted by PyInstaller.
     """
     return files(_DATA_PACKAGE).joinpath(filename)
+
+def icon_path(name: str = "app.ico") -> Path:
+    return files(_ICON_PACKAGE).joinpath(name)
