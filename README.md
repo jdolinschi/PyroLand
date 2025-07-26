@@ -15,9 +15,10 @@ the calibrations' folder.
 To get info on each specific calibration that comes preloaded, just double-click the calibration 
 in the table.
 
-Supports fitting specific regions of the data either through tail and head cutoffs of the spectrum 
+Supports fitting specific regions of the data either through tail and head masking of the spectrum 
 or an unlimited number of specific x-regions within the spectrum. For example, if you have extra peaks 
-within the gray body spectrum, you can filter them out.
+within the spectrum, you can filter them out with the excluded regions table by adding a new region and entering the x-min 
+and x-max of the spectrum to not use for fitting.
 
 ---
 
