@@ -1,19 +1,44 @@
+# src/pyroland/controllers/corrections_info_controller.py
 from __future__ import annotations
+
+"""
+CorrectionsInfoController
+=========================
+
+Provides rich, scrollable dialogs that explain each spectral correction and
+illustrate it with one or more images.
+
+**Fix (2025-07-26)**
+--------------------
+Whenever a dialog is closed it is *deleted* because of the
+``Qt.WA_DeleteOnClose`` attribute.  We now connect the dialog’s
+``destroyed`` signal to a small lambda that *removes* the dialog from the
+internal cache.  This guarantees that the cache never keeps a dangling
+reference and a fresh QDialog is created the next time the user double-clicks
+the same correction entry.
+"""
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Tuple
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QDialog, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QDialog,
+    QLabel,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 logger = logging.getLogger(__name__)
+
 
 class CorrectionsInfoController:
     """Manage and display information dialogs for spectrum corrections.
 
-    Each correction entry can include multiple illustrative images. The first
+    Each correction entry can include multiple illustrative images.  The first
     image is displayed above the description, any others are shown below.
     """
 
@@ -22,14 +47,21 @@ class CorrectionsInfoController:
 
     def __init__(self, parent=None) -> None:
         self._parent = parent
+        # Cache of open dialogs:  correction name → QDialog
         self._dialogs: Dict[str, QDialog] = {}
-        # Map: correction name -> (HTML description, list of image Paths)
-        self._info_map: Dict[str, Tuple[str, List[Path]]] = self._build_default_info_map()
+        # Mapping: correction name → (HTML description, list[Path] images)
+        self._info_map: Dict[str, Tuple[str, List[Path]]] = (
+            self._build_default_info_map()
+        )
 
+    # ------------------------------------------------------------------ #
+    # Public API
+    # ------------------------------------------------------------------ #
     def show_info(self, correction_name: str) -> None:
         """Show an explanatory dialog for *correction_name*.
 
         If the dialog already exists, it is simply brought to the front.
+        A closed dialog is deleted; the cache entry is purged automatically.
         """
         if correction_name in self._dialogs:
             dlg = self._dialogs[correction_name]
@@ -40,18 +72,30 @@ class CorrectionsInfoController:
 
         description, image_paths = self._info_for(correction_name)
         dlg = self._create_dialog(correction_name, description, image_paths)
+
+        # ---- NEW: purge cache entry once the underlying C++ object dies ----
+        # (Prevents stale references that caused ‘Internal C++ object already
+        #  deleted’ on a second double-click.)
+        dlg.destroyed.connect(
+            lambda _obj, name=correction_name: self._dialogs.pop(name, None)
+        )
+
         self._dialogs[correction_name] = dlg
         dlg.show()
 
+    # ------------------------------------------------------------------ #
+    # Internal helpers
+    # ------------------------------------------------------------------ #
     def _create_dialog(
         self,
         title: str,
         description: str,
         image_paths: List[Path],
     ) -> QDialog:
-        """Construct a scrollable dialog with optional images above and below text."""
+        """Construct a scrollable dialog with optional images above/below text."""
         dlg = QDialog(self._parent)
         dlg.setWindowTitle(f"{title} — Correction information")
+        # Delete the widget on close so we reclaim memory.
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
         scroll = QScrollArea(dlg)
@@ -60,17 +104,17 @@ class CorrectionsInfoController:
         content = QWidget()
         content_layout = QVBoxLayout(content)
 
-        # If there's at least one image, show the first above the description
+        # First image above the description, if present
         if image_paths:
             self._add_image_widget(content_layout, image_paths[0])
 
-        # Description text (rich HTML)
+        # Rich-text description
         desc_label = QLabel(description, content)
         desc_label.setWordWrap(True)
         desc_label.setTextFormat(Qt.TextFormat.RichText)
         content_layout.addWidget(desc_label)
 
-        # Show any remaining images below the description
+        # Remaining images below the description
         for img_path in image_paths[1:]:
             self._add_image_widget(content_layout, img_path)
 
@@ -79,43 +123,46 @@ class CorrectionsInfoController:
 
         layout = QVBoxLayout(dlg)
         layout.addWidget(scroll)
-        dlg.resize(900, 1024)
+        dlg.resize(900, 1_024)
         return dlg
 
     def _add_image_widget(self, layout: QVBoxLayout, image_path: Path) -> None:
-        """Helper to load and insert a QPixmap into the given layout."""
-        if not image_path:
-            return
-        if image_path.is_file():
-            pixmap = QPixmap(str(image_path))
-            if not pixmap.isNull():
-                img_label = QLabel()
-                img_label.setAlignment(
-                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
-                )
-                # Downscale very wide images to fit the dialog
-                max_width = 600
-                if pixmap.width() > max_width:
-                    pixmap = pixmap.scaledToWidth(
-                        max_width, Qt.TransformationMode.SmoothTransformation
-                    )
-                img_label.setPixmap(pixmap)
-                layout.addWidget(img_label)
-            else:
-                logger.warning("Failed to load pixmap from %s", image_path)
-        else:
+        """Helper to load and insert a QPixmap into *layout*."""
+        if not image_path or not image_path.is_file():
             logger.warning("Image file not found: %s", image_path)
+            return
+
+        pixmap = QPixmap(str(image_path))
+        if pixmap.isNull():
+            logger.warning("Failed to load pixmap from %s", image_path)
+            return
+
+        img_label = QLabel()
+        img_label.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+        )
+        max_width = 600
+        if pixmap.width() > max_width:
+            pixmap = pixmap.scaledToWidth(
+                max_width, Qt.TransformationMode.SmoothTransformation
+            )
+        img_label.setPixmap(pixmap)
+        layout.addWidget(img_label)
 
     def _info_for(self, name: str) -> Tuple[str, List[Path]]:
-        """Return the info (description and image list) for *name* or a placeholder."""
+        """Return the (description, images) tuple for *name* or a placeholder."""
         return self._info_map.get(
             name,
             ("<p>No information available for this correction.</p>", []),
         )
 
+    # ------------------------------------------------------------------ #
+    # Static data
+    # ------------------------------------------------------------------ #
     @classmethod
     def _build_default_info_map(cls) -> Dict[str, Tuple[str, List[Path]]]:
         """Return default mapping of correction names to (description, list of images)."""
+
         def _img(name: str) -> Path:
             return cls._RESOURCE_DIR / name
 
@@ -174,7 +221,7 @@ class CorrectionsInfoController:
                 """
                 <h3>Silvered mirror reflectance correction</h3>
                 <p>Silvered mirrors exhibit wavelength-dependent reflectance influenced by the coating and substrate. 
-                The Andor Kymera 328i-D2-sil includes four such mirrors, but depending on the optical path and configuration, 
+                The Andor Kymera 328i-D2-sil includes four such mirrors (circled in green above), but depending on the optical path and configuration, 
                 light may reflect off three before detection. To account for this, we apply the cumulative reflectance curve 
                 for three reflections—sourced from Oxford Instruments—to correct the measured spectrum for mirror losses at each wavelength.</p>
                 """,
@@ -182,7 +229,6 @@ class CorrectionsInfoController:
                     _img("andor-kymera-mirrors-image.png"),
                     _img("Mirror_reflectance_(3_used_in_the_Andor_Kymera_328i).png"),
                 ],
-),
-
+            ),
 
         }
